@@ -19,8 +19,6 @@ const vertexShader = /*glsl*/`
 
   void main(){
     vec3 displaced = position;
-    displaced.x += .5 * sin(vTime + position.y + 3.0);
-
     pos = displaced;
 
     vec4 modelViewPosition = modelViewMatrix * vec4(displaced, 1.0);
@@ -36,8 +34,8 @@ const fragmentShader = /*glsl*/`
   }
 `
 
-
-let geometry = new THREE.BoxGeometry(3, 3, 3, 30, 30, 30);
+let res = 150;
+let geometry = new THREE.BoxGeometry(3, 3, 3, res, res, res);
 
 let material = new THREE.ShaderMaterial({
   vertexShader: vertexShader,
@@ -56,12 +54,29 @@ for (let i = 0; i < geometry.attributes.position.count; i++){
 }
 
 let mesh = new THREE.Mesh(geometry, material);
-
 scene.add(mesh);
 
+function createCrater(geometry, center, radius, depth){
+  const meshData = geometry.attributes.position;
+  const vertex = new THREE.Vector3();
 
+  for (let i = 0; i < meshData.count; i++){
+    vertex.fromBufferAttribute(meshData, i);
+    const distToCenter = vertex.distanceTo(center);
 
+    if (distToCenter <= radius){
+      const influence = -depth * Math.exp(-Math.pow(distToCenter, 2) / (radius * radius));
+      const normal = vertex.clone().normalize().multiplyScalar(2);
+      vertex.addScaledVector(normal, influence);
+      meshData.setXYZ(i, vertex.x, vertex.y, vertex.z);
+    }
+  }
 
+  meshData.needsUpdate = true;
+  geometry.computeVertexNormals();
+}
+
+createCrater(geometry, new THREE.Vector3(0.3, 0.5, 0.2).normalize().multiplyScalar(2), 0.3, 0.1);
 
 
 
