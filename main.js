@@ -58,59 +58,67 @@ scene.add(dl);
 const pointLightHelper = new THREE.DirectionalLightHelper(dl, 3);
 scene.add(pointLightHelper);
 
-
-function smoothstep(t) {
-  return t * t * (3 - 2 * t);
+function smoothMin(a, b, k) {
+  const h = Math.max(0.0, Math.min(1.0, 0.5 + 0.5 * (b - a) / k));
+  return a * h + b * (1.0 - h) - k * h * (1.0 - h);
 }
-
-function createCrater(geometry, center, totalRadius, depth, rimHeight = depth * 0.4) {
-  const floorRadius = totalRadius * 0.4;
-  const rimRadius = totalRadius * 0.19;
-
-  const meshData = geometry.attributes.position;
+function createCrater(geometry, center, radius, depth) {
+  const pos = geometry.attributes.position;
   const vertex = new THREE.Vector3();
 
-  for (let i = 0; i < meshData.count; i++) {
-    vertex.fromBufferAttribute(meshData, i);
+  const rimWidth = radius * 0.4;
+  const rimHeight = depth * 0.6;
+  const craterFloorDepth = depth;
+  const blendStrength = depth;
+
+  for (let i = 0; i < pos.count; i++) {
+    vertex.fromBufferAttribute(pos, i);
     const dist = vertex.distanceTo(center);
-    if (dist > totalRadius) continue;
+    const norm = vertex.clone().normalize();
 
-    const normal = vertex.clone().normalize();
-    let influence = 0;
+    const t = dist / radius;
+    
+    // Crater bowl: an inverted parabola that flattens at center
+    let bowl = -craterFloorDepth * (1 - t * t); // deeper toward center
+    if (t > 1) bowl = 0; // outside crater
 
-    if (dist < floorRadius) {
-      // Flat floor
-      influence = -depth;
-    } else if (dist < rimRadius) {
-      // Wall: smooth transition from floor to base of rim
-      const t = (dist - floorRadius) / (rimRadius - floorRadius); // [0,1]
-      const eased = smoothstep(t);
-      influence = -depth * (1 - eased);
-    } else {
-      // Rim: subtle raised bump with fade-out
-      const t = (dist - rimRadius) / (totalRadius - rimRadius); // [0,1]
-      const eased = 1 - smoothstep(t); // fade in at rim edge
-      influence = rimHeight * eased;
-    }
+    // Rim: raised ring around edge
+    const rimT = (dist - radius) / rimWidth;
+    let rim = rimHeight * (1 - rimT * rimT);
+    if (rimT < 0 || rimT > 1) rim = 0;
 
-    vertex.addScaledVector(normal, influence);
-    meshData.setXYZ(i, vertex.x, vertex.y, vertex.z);
+    // Combine crater shape: take the max between bowl and rim
+    let craterShape = smoothMin(bowl, rim, blendStrength);
+
+
+    // Smooth transitions using interpolation blend
+    // (optional advanced: use smoothstep for smoother edge blending)
+
+    // Apply to mesh
+    vertex.addScaledVector(norm, craterShape);
+    pos.setXYZ(i, vertex.x, vertex.y, vertex.z);
   }
 
-  meshData.needsUpdate = true;
+  pos.needsUpdate = true;
   geometry.computeVertexNormals();
 }
 
 
 
-let depth = 0.06;
-let radius = 0.1;
-for (let i = 0; i<100; i++){
-  const x = Math.random() * 2 - 1;
-  const y = Math.random() * 2 - 1;
-  const z = Math.random() * 2 - 1;
-  createCrater(geometry, new THREE.Vector3(x,y,z).normalize().multiplyScalar(5), Math.random(), Math.random() * 0.15);
+
+for (let i = 0; i < 30; i++) {
+  const pos = new THREE.Vector3(
+    Math.random() * 2 - 1,
+    Math.random() * 2 - 1,
+    Math.random() * 2 - 1
+  ).normalize().multiplyScalar(5);
+
+  const radius = 0.1 + Math.random() * 0.6; // radius: 0.6 - 1.2
+  const depth = 0.1 + Math.random() * 0.3;  // depth: 0.3 - 0.7
+
+  createCrater(geometry, pos, radius, depth);
 }
+
 
 
 
@@ -120,8 +128,8 @@ const gui = new dat.GUI();
 const settings = {
   wireframe: true,
   res: 300,
-  craterDepth: depth,
-  craterRadius: radius
+  craterDepth: 0.3,
+  craterRadius: 0.2
 };
 
 gui.add(settings, 'wireframe').onChange(value => {
@@ -211,7 +219,7 @@ function animate() {
   // Required if controls.enableDamping or controls.autoRotate are set to true
   controls.update();
   onWindowResize()
-  mesh.rotation.y += 0.002;
+  //mesh.rotation.y += 0.002;
   renderer.render(scene, camera);
 }
 animate();
