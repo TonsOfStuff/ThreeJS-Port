@@ -30,53 +30,88 @@ const fragmentShader = /*glsl*/`
   varying vec3 pos;
 
   void main() {
-    gl_FragColor = vec4(pos, 1);
+    gl_FragColor = vec4(0.5, 0.3, 0.2, 1);
   }
 `
 
-let res = 150;
+let res = 80;
 let geometry = new THREE.BoxGeometry(3, 3, 3, res, res, res);
 
-let material = new THREE.ShaderMaterial({
-  vertexShader: vertexShader,
-  fragmentShader: fragmentShader,
-  uniforms: {
-    vTime: {value: 1.0}
-  },
-  wireframe: true
+let material = new THREE.MeshStandardMaterial({
+  wireframe: true,
+  color: 0xffffff  
 });
 
 for (let i = 0; i < geometry.attributes.position.count; i++){
   const vertex = new THREE.Vector3();
   vertex.fromBufferAttribute(geometry.attributes.position, i);
-  vertex.normalize().multiplyScalar(2);
+  vertex.normalize().multiplyScalar(5);
   geometry.attributes.position.setXYZ(i, vertex.x, vertex.y, vertex.z);
 }
 
 let mesh = new THREE.Mesh(geometry, material);
 scene.add(mesh);
 
-function createCrater(geometry, center, radius, depth){
+const dl = new THREE.DirectionalLight(0xffffff, 3); 
+dl.position.set(5, 5, 5); 
+scene.add(dl);
+const pointLightHelper = new THREE.DirectionalLightHelper(dl, 3);
+scene.add(pointLightHelper);
+
+
+function smoothstep(t) {
+  return t * t * (3 - 2 * t);
+}
+
+function createCrater(geometry, center, totalRadius, depth, rimHeight = depth * 0.4) {
+  const floorRadius = totalRadius * 0.4;
+  const rimRadius = totalRadius * 0.19;
+
   const meshData = geometry.attributes.position;
   const vertex = new THREE.Vector3();
 
-  for (let i = 0; i < meshData.count; i++){
+  for (let i = 0; i < meshData.count; i++) {
     vertex.fromBufferAttribute(meshData, i);
-    const distToCenter = vertex.distanceTo(center);
+    const dist = vertex.distanceTo(center);
+    if (dist > totalRadius) continue;
 
-    if (distToCenter <= radius){
-      const influence = -depth * Math.exp(-Math.pow(distToCenter, 2) / (radius * radius));
-      const normal = vertex.clone().normalize().multiplyScalar(2);
-      vertex.addScaledVector(normal, influence);
-      meshData.setXYZ(i, vertex.x, vertex.y, vertex.z);
+    const normal = vertex.clone().normalize();
+    let influence = 0;
+
+    if (dist < floorRadius) {
+      // Flat floor
+      influence = -depth;
+    } else if (dist < rimRadius) {
+      // Wall: smooth transition from floor to base of rim
+      const t = (dist - floorRadius) / (rimRadius - floorRadius); // [0,1]
+      const eased = smoothstep(t);
+      influence = -depth * (1 - eased);
+    } else {
+      // Rim: subtle raised bump with fade-out
+      const t = (dist - rimRadius) / (totalRadius - rimRadius); // [0,1]
+      const eased = 1 - smoothstep(t); // fade in at rim edge
+      influence = rimHeight * eased;
     }
+
+    vertex.addScaledVector(normal, influence);
+    meshData.setXYZ(i, vertex.x, vertex.y, vertex.z);
   }
 
   meshData.needsUpdate = true;
   geometry.computeVertexNormals();
 }
 
-createCrater(geometry, new THREE.Vector3(0.3, 0.5, 0.2).normalize().multiplyScalar(2), 0.3, 0.1);
+
+
+let depth = 0.06;
+let radius = 0.1;
+for (let i = 0; i<100; i++){
+  const x = Math.random() * 2 - 1;
+  const y = Math.random() * 2 - 1;
+  const z = Math.random() * 2 - 1;
+  createCrater(geometry, new THREE.Vector3(x,y,z).normalize().multiplyScalar(5), Math.random(), Math.random() * 0.15);
+}
+
 
 
 
@@ -84,15 +119,16 @@ createCrater(geometry, new THREE.Vector3(0.3, 0.5, 0.2).normalize().multiplyScal
 const gui = new dat.GUI();
 const settings = {
   wireframe: true,
-  res: 3,
-  sin: 0.1
+  res: 300,
+  craterDepth: depth,
+  craterRadius: radius
 };
 
 gui.add(settings, 'wireframe').onChange(value => {
   material.wireframe = value;
 });
 
-gui.add(settings, "res", 1, 30).onChange(value => {
+gui.add(settings, "res", 100, 300).onChange(value => {
   geometry.heightSegments = value;
   geometry.widthSegments = value;
   geometry.lengthSegments = value;
@@ -116,8 +152,44 @@ gui.add(settings, "res", 1, 30).onChange(value => {
   scene.add(mesh);
 })
 
-gui.add(settings, 'sin', 0, 30).onChange(value => {
-  material.uniforms.vTime.value = value;
+gui.add(settings, "craterDepth", 0.01, 0.3).onChange(value => {
+  scene.remove(mesh);
+  geometry.dispose();
+  const newGeometry = new THREE.BoxGeometry(3, 3, 3, res, res, res);
+
+  for (let i = 0; i < newGeometry.attributes.position.count; i++) {
+    const vertex = new THREE.Vector3();
+    vertex.fromBufferAttribute(newGeometry.attributes.position, i);
+    vertex.normalize().multiplyScalar(2);
+    newGeometry.attributes.position.setXYZ(i, vertex.x, vertex.y, vertex.z);
+  }
+
+  // Assign new geometry
+  mesh = new THREE.Mesh(newGeometry, material);
+  geometry = newGeometry; // update reference so we can dispose it again later
+  scene.add(mesh);
+  depth = value;
+  createCrater(geometry, new THREE.Vector3(0.3, 0.5, 0.2).normalize().multiplyScalar(2), radius, depth);
+})
+
+gui.add(settings, "craterRadius", 0.01, 1).onChange(value => {
+  scene.remove(mesh);
+  geometry.dispose();
+  const newGeometry = new THREE.BoxGeometry(3, 3, 3, res, res, res);
+
+  for (let i = 0; i < newGeometry.attributes.position.count; i++) {
+    const vertex = new THREE.Vector3();
+    vertex.fromBufferAttribute(newGeometry.attributes.position, i);
+    vertex.normalize().multiplyScalar(2);
+    newGeometry.attributes.position.setXYZ(i, vertex.x, vertex.y, vertex.z);
+  }
+
+  // Assign new geometry
+  mesh = new THREE.Mesh(newGeometry, material);
+  geometry = newGeometry; // update reference so we can dispose it again later
+  scene.add(mesh);
+  radius = value;
+  createCrater(geometry, new THREE.Vector3(0.3, 0.5, 0.2).normalize().multiplyScalar(2), radius, depth);
 })
 
 function onWindowResize() {
@@ -134,14 +206,12 @@ controls.enableDamping = true;
 controls.dampingFactor = 1; 
 
 // Render the scene
-let time = 0;
 function animate() {
   requestAnimationFrame(animate);
-  time += .5;
   // Required if controls.enableDamping or controls.autoRotate are set to true
   controls.update();
-  material.uniforms.time = time;
   onWindowResize()
+  mesh.rotation.y += 0.002;
   renderer.render(scene, camera);
 }
 animate();

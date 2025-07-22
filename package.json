@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "dat.gui": "^0.7.9",
-    "three": "^0.178.0"
+    "three": "^0.178.0",
+    "three-custom-shader-material": "^6.3.7"
   }
 }
