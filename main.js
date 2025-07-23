@@ -13,33 +13,213 @@ const renderer = new THREE.WebGLRenderer();
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
-const vertexShader = /*glsl*/`
-  uniform float vTime;
-  varying vec3 pos;
+const snoise = document.getElementById("snoise").innerHTML;
+const vertexShader = /*glsl*/`  
+  attribute vec3 tangent;
+
+  uniform int type;
+  uniform float radius;
+  uniform float amplitude;
+  uniform float sharpness;
+  uniform float offset;
+  uniform float period;
+  uniform float persistence;
+  uniform float lacunarity;
+  uniform int octaves;
+
+  varying vec3 fragPosition;
+  varying vec3 fragNormal;
+  varying vec3 fragTangent;
+  varying vec3 fragBitangent;
 
   void main(){
-    vec3 displaced = position;
-    pos = displaced;
+    float terrain = terrainHeight(type, position, amplitude, sharpness, offset, period, persistence, lacunarity, octaves);
 
-    vec4 modelViewPosition = modelViewMatrix * vec4(displaced, 1.0);
-    gl_Position = projectionMatrix * modelViewPosition;
+    vec3 pos = position * (radius + terrain);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+    fragPosition = position;
+    fragNormal = normal;
+    fragTangent = tangent;
+    fragBitangent = cross(normal, tangent);
   }
 `
 
 const fragmentShader = /*glsl*/`
   varying vec3 pos;
 
-  void main() {
-    gl_FragColor = vec4(0.5, 0.3, 0.2, 1);
+  uniform int type;
+  uniform float radius;
+  uniform float amplitude;
+  uniform float sharpness;
+  uniform float offset;
+  uniform float period;
+  uniform float persistence;
+  uniform float lacunarity;
+  uniform int octaves;
+
+  // Layer colors
+  uniform vec3 color1;
+  uniform vec3 color2;
+  uniform vec3 color3;
+  uniform vec3 color4;
+  uniform vec3 color5;
+  
+  // Transition points for each layer
+  uniform float transition2;
+  uniform float transition3;
+  uniform float transition4;
+  uniform float transition5;
+
+  // Amount of blending between each layer
+  uniform float blend12;
+  uniform float blend23;
+  uniform float blend34;
+  uniform float blend45;
+
+  // Bump mapping parameters
+  uniform float bumpStrength;
+  uniform float bumpOffset;
+
+  // Lighting parameters
+  uniform float ambientIntensity;
+  uniform float diffuseIntensity;
+  uniform float specularIntensity;
+  uniform float shininess;
+  uniform vec3 lightDirection;
+  uniform vec3 lightColor;
+
+  varying vec3 fragPosition;
+  varying vec3 fragNormal;
+  varying vec3 fragTangent;
+  varying vec3 fragBitangent;
+
+  void main(){
+    float h = terrainHeight(
+      type,
+      fragPosition,
+      amplitude, 
+      sharpness,
+      offset,
+      period, 
+      persistence, 
+      lacunarity, 
+      octaves);
+
+    vec3 dx = bumpOffset * fragTangent;
+    float h_dx = terrainHeight(
+      type,
+      fragPosition + dx,
+      amplitude, 
+      sharpness,
+      offset,
+      period, 
+      persistence, 
+      lacunarity, 
+      octaves);
+
+    vec3 dy = bumpOffset * fragBitangent;
+    float h_dy = terrainHeight(
+      type,
+      fragPosition + dy,
+      amplitude, 
+      sharpness,
+      offset,
+      period, 
+      persistence, 
+      lacunarity, 
+      octaves);
+
+    vec3 pos = fragPosition * (radius + h);
+    vec3 pos_dx = (fragPosition + dx) * (radius + h_dx);
+    vec3 pos_dy = (fragPosition + dy) * (radius + h_dy);
+
+    // Recalculate surface normal post-bump mapping
+    vec3 bumpNormal = normalize(cross(pos_dx - pos, pos_dy - pos));
+    // Mix original normal and bumped normal to control bump strength
+    vec3 N = normalize(mix(fragNormal, bumpNormal, bumpStrength));
+  
+    // Normalized light direction (points in direction that light travels)
+    vec3 L = normalize(-lightDirection);
+    // View vector from camera to fragment
+    vec3 V = normalize(cameraPosition - pos);
+    // Reflected light vector
+    vec3 R = normalize(reflect(L, N));
+
+    float diffuse = diffuseIntensity * max(0.0, dot(N, -L));
+
+    // https://ogldev.org/www/tutorial19/tutorial19.html
+    float specularFalloff = clamp((transition3 - h) / transition3, 0.0, 1.0);
+    float specular = max(0.0, specularFalloff * specularIntensity * pow(dot(V, R), shininess));
+
+    float light = ambientIntensity + diffuse + specular;
+
+    // Blender colors layer by layer
+    vec3 color12 = mix(
+      color1, 
+      color2, 
+      smoothstep(transition2 - blend12, transition2 + blend12, h));
+
+    vec3 color123 = mix(
+      color12, 
+      color3, 
+      smoothstep(transition3 - blend23, transition3 + blend23, h));
+
+    vec3 color1234 = mix(
+      color123, 
+      color4, 
+      smoothstep(transition4 - blend34, transition4 + blend34, h));
+
+    vec3 finalColor = mix(
+      color1234, 
+      color5, 
+      smoothstep(transition5 - blend45, transition5 + blend45, h));
+    
+    gl_FragColor = vec4(light * finalColor * lightColor, 1.0);
   }
 `
 
 let res = 80;
-let geometry = new THREE.BoxGeometry(3, 3, 3, res, res, res);
+let geometry = new THREE.SphereGeometry(5, res, res);
 
-let material = new THREE.MeshStandardMaterial({
+let material = new THREE.ShaderMaterial({
   wireframe: true,
-  color: 0xffffff  
+  vertexShader: vertexShader.replace("void main(){", `${snoise}
+    void main(){`),
+  fragmentShader: fragmentShader.replace("void main(){", `${snoise}
+    void main(){`),
+  uniforms: {
+    type: {value: 2},
+    radius: { value: 15.0 },
+    amplitude: { value: 1.2 },
+    sharpness: { value: 1.6 },
+    offset: { value: -0.016 },
+    period: { value: 3.2 },
+    persistence: { value: 0.484 },
+    lacunarity: { value: 1.8 },
+    octaves: { value: 10 },
+    undulation: { value: 0.0 },
+    ambientIntensity: { value: 0.42 },
+    diffuseIntensity: { value: 1.3 },
+    specularIntensity: { value: 2 },
+    shininess: { value: 3 },
+    lightDirection: { value: new THREE.Vector3(1, 1, 1) },
+    lightColor: { value: new THREE.Color(0xffffff) },
+    bumpStrength: { value: 1.0 },
+    bumpOffset: { value: 0.001 },
+    color1: { value: new THREE.Color(0.014, 0.117, 0.279) },
+    color2: { value: new THREE.Color(0.080, 0.527, 0.351) },
+    color3: { value: new THREE.Color(0.620, 0.516, 0.372) },
+    color4: { value: new THREE.Color(0.149, 0.254, 0.084) },
+    color5: { value: new THREE.Color(0.150, 0.150, 0.150) },
+    transition2: { value: 0.071 },
+    transition3: { value: 0.215 },
+    transition4: { value: 0.372 },
+    transition5: { value: 1.2 },
+    blend12: { value: 0.152 },
+    blend23: { value: 0.152 },
+    blend34: { value: 0.104 },
+    blend45: { value: 0.168 }
+  }
 });
 
 for (let i = 0; i < geometry.attributes.position.count; i++){
@@ -50,6 +230,7 @@ for (let i = 0; i < geometry.attributes.position.count; i++){
 }
 
 let mesh = new THREE.Mesh(geometry, material);
+mesh.geometry.computeTangents();
 scene.add(mesh);
 
 const dl = new THREE.DirectionalLight(0xffffff, 3); 
@@ -105,7 +286,7 @@ function createCrater(geometry, center, radius, depth) {
 
 
 
-
+/*
 for (let i = 0; i < 30; i++) {
   const pos = new THREE.Vector3(
     Math.random() * 2 - 1,
@@ -118,7 +299,7 @@ for (let i = 0; i < 30; i++) {
 
   createCrater(geometry, pos, radius, depth);
 }
-
+*/
 
 
 
